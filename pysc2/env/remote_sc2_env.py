@@ -19,18 +19,18 @@ from __future__ import print_function
 
 import collections
 from absl import logging
-import time
 
 from pysc2 import maps
 from pysc2 import run_configs
 from pysc2.env import sc2_env
+from pysc2.lib import features
 from pysc2.lib import remote_controller
 from pysc2.lib import run_parallel
 
 from s2clientprotocol import sc2api_pb2 as sc_pb
 
 
-class RestartException(Exception):
+class RestartError(Exception):
   pass
 
 
@@ -122,6 +122,7 @@ class RemoteSC2Env(sc2_env.SC2Env):
 
     map_inst = map_name and maps.get(map_name)
     self._map_name = map_name
+    self._game_info = None
 
     self._num_agents = 1
     self._discount = discount
@@ -129,19 +130,19 @@ class RemoteSC2Env(sc2_env.SC2Env):
     self._realtime = realtime
     self._last_step_time = None
     self._save_replay_episodes = 1 if replay_dir else 0
-    self._next_replay_save_time = time.time() + 60.0
     self._replay_dir = replay_dir
     self._replay_prefix = replay_prefix
 
     self._score_index = -1  # Win/loss only.
     self._score_multiplier = 1
-    self._episode_length = 0  # No limit.
+    self._episode_length = sc2_env.MAX_STEP_COUNT
     self._ensure_available_actions = False
     self._discount_zero_after_timeout = False
 
     self._run_config = run_configs.get()
     self._parallel = run_parallel.RunParallel()  # Needed for multiplayer.
     self._in_game = False
+    self._action_delay_fns = [None]
 
     interface = self._get_interface(
         agent_interface_format=agent_interface_format, require_raw=visualize)
@@ -154,24 +155,10 @@ class RemoteSC2Env(sc2_env.SC2Env):
       ports = [lan_port + p for p in range(4)]  # 2 * num players *in the game*.
 
     self._connect_remote(
-        host, host_port, ports, race, name, map_inst, save_map, interface)
+        host, host_port, ports, race, name, map_inst, save_map, interface,
+        agent_interface_format)
 
-    self._finalize([agent_interface_format], [interface], visualize)
-
-  def step(self, actions, step_mul=None):
-    result = super(RemoteSC2Env, self).step(actions, step_mul)
-
-    current_time = time.time()
-    if self._realtime and current_time > self._next_replay_save_time:
-      # Currently we don't get a player result when a realtime game ends,
-      # which means no replay is saved. As a temporary workaround, save
-      # a replay every minute of the game when playing remote.
-      # TODO(b/115466611): player_results should be returned in realtime mode
-      logging.info("Saving interim replay...")
-      self.save_replay(self._replay_dir, self._replay_prefix)
-      self._next_replay_save_time = current_time + 60.0
-
-    return result
+    self._finalize(visualize)
 
   def close(self):
     # Leave the game so that another may be created in the same SC2 process.
@@ -180,14 +167,16 @@ class RemoteSC2Env(sc2_env.SC2Env):
       self._controllers[0].leave()
       self._in_game = False
       logging.info("Left game.")
+    self._controllers[0].close()
 
     # We don't own the SC2 process, we shouldn't call quit in the super class.
     self._controllers = None
+    self._game_info = None
 
     super(RemoteSC2Env, self).close()
 
   def _connect_remote(self, host, host_port, lan_ports, race, name, map_inst,
-                      save_map, interface):
+                      save_map, interface, agent_interface_format):
     """Make sure this stays synced with bin/agent_remote.py."""
     # Connect!
     logging.info("Connecting...")
@@ -210,10 +199,20 @@ class RemoteSC2Env(sc2_env.SC2Env):
 
     logging.info("Joining game.")
     self._controllers[0].join_game(join)
+
+    self._game_info = [self._controllers[0].game_info()]
+
+    if not self._map_name:
+      self._map_name = self._game_info[0].map_name
+
+    self._features = [features.features_from_game_info(
+        game_info=self._game_info[0],
+        agent_interface_format=agent_interface_format)]
+
     self._in_game = True
     logging.info("Game joined.")
 
   def _restart(self):
     # Can't restart since it's not clear how you'd coordinate that with the
     # other players.
-    raise RestartException("Can't restart")
+    raise RestartError("Can't restart")

@@ -110,6 +110,21 @@ class NamedArrayTest(parameterized.TestCase):
     with self.assertRaises(KeyError):
       a["d"]  # pylint: disable=pointless-statement
 
+    # New axis = None
+    self.assertArrayEqual(a, [1, 3, 6])
+    self.assertArrayEqual(a[np.newaxis], [[1, 3, 6]])
+    self.assertArrayEqual(a[None], [[1, 3, 6]])
+    self.assertArrayEqual(a[None, :], [[1, 3, 6]])
+    self.assertArrayEqual(a[:, None], [[1], [3], [6]])
+    self.assertArrayEqual(a[None, :, None], [[[1], [3], [6]]])
+    self.assertArrayEqual(a[None, a % 3 == 0, None], [[[3], [6]]])
+    self.assertArrayEqual(a[None][None], [[[1, 3, 6]]])
+    self.assertArrayEqual(a[None][0], [1, 3, 6])
+    self.assertEqual(a[None, 0], 1)
+    self.assertEqual(a[None, "a"], 1)
+    self.assertEqual(a[None][0].a, 1)
+    self.assertEqual(a[None][0, "b"], 3)
+
     # range slicing
     self.assertArrayEqual(a[0:2], [1, 3])
     self.assertArrayEqual(a[1:3], [3, 6])
@@ -129,6 +144,9 @@ class NamedArrayTest(parameterized.TestCase):
     self.assertArrayEqual(a[np.array([0, 2])], [1, 6])
     self.assertEqual(a[[1, 2]].b, 3)
     self.assertEqual(a[[2, 0]].c, 6)
+    with self.assertRaises(TypeError):
+      # Duplicates lead to unnamed dimensions.
+      a[[0, 0]].a  # pylint: disable=pointless-statement
 
     a[1] = 4
     self.assertEqual(a[1], 4)
@@ -178,15 +196,34 @@ class NamedArrayTest(parameterized.TestCase):
     self.assertArrayEqual(a[::-1].a[0], 1)
     self.assertArrayEqual(a[::-1].b, [6, 8])
     self.assertArrayEqual(a[[0, 0]], [[1, 3], [1, 3]])
-    self.assertArrayEqual(a[[0, 0]].a, [1, 3])
+    with self.assertRaises(TypeError):
+      a[[0, 0]].a  # pylint: disable=pointless-statement
     self.assertEqual(a[0, 1], 3)
     self.assertEqual(a[(0, 1)], 3)
     self.assertEqual(a["a", 0], 1)
     self.assertEqual(a["b", 0], 6)
     self.assertEqual(a["b", 1], 8)
     self.assertEqual(a.a[0], 1)
+    self.assertArrayEqual(a[a > 2], [3, 6, 8])
+    self.assertArrayEqual(a[a % 3 == 0], [3, 6])
     with self.assertRaises(TypeError):
       a[0].a  # pylint: disable=pointless-statement
+
+    # New axis = None
+    self.assertArrayEqual(a, [[1, 3], [6, 8]])
+    self.assertArrayEqual(a[np.newaxis], [[[1, 3], [6, 8]]])
+    self.assertArrayEqual(a[None], [[[1, 3], [6, 8]]])
+    self.assertArrayEqual(a[None, :], [[[1, 3], [6, 8]]])
+    self.assertArrayEqual(a[None, "a"], [[1, 3]])
+    self.assertArrayEqual(a[:, None], [[[1, 3]], [[6, 8]]])
+    self.assertArrayEqual(a[None, :, None], [[[[1, 3]], [[6, 8]]]])
+    self.assertArrayEqual(a[None, 0, None], [[[1, 3]]])
+    self.assertArrayEqual(a[None, "a", None], [[[1, 3]]])
+    self.assertArrayEqual(a[None][None], [[[[1, 3], [6, 8]]]])
+    self.assertArrayEqual(a[None][0], [[1, 3], [6, 8]])
+    self.assertArrayEqual(a[None][0].a, [1, 3])
+    self.assertEqual(a[None][0].a[0], 1)
+    self.assertEqual(a[None][0, "b", 1], 8)
 
   def test_named_array_multi_second(self):
     a = named_array.NamedNumpyArray([[1, 3], [6, 8]], [None, ["a", "b"]])
@@ -196,8 +233,19 @@ class NamedArrayTest(parameterized.TestCase):
     self.assertEqual(a[0, "b"], 3)
     self.assertEqual(a[1, "b"], 8)
     self.assertEqual(a[0].a, 1)
+    self.assertArrayEqual(a[a > 2], [3, 6, 8])
+    self.assertArrayEqual(a[a % 3 == 0], [3, 6])
     with self.assertRaises(TypeError):
       a.a  # pylint: disable=pointless-statement
+    self.assertArrayEqual(a[None, :, "a"], [[1, 6]])
+
+  def test_masking(self):
+    a = named_array.NamedNumpyArray([[1, 2, 3, 4], [5, 6, 7, 8]],
+                                    [None, list("abcd")])
+    self.assertArrayEqual(a[a > 2], [3, 4, 5, 6, 7, 8])
+    self.assertArrayEqual(a[a < 4], [1, 2, 3])
+    self.assertArrayEqual(a[a % 2 == 0], [2, 4, 6, 8])
+    self.assertArrayEqual(a[a % 3 == 0], [3, 6])
 
   def test_slicing(self):
     a = named_array.NamedNumpyArray([1, 2, 3, 4, 5], list("abcde"))
@@ -274,15 +322,34 @@ class NamedArrayTest(parameterized.TestCase):
     self.assertEqual(repr(a), ("NamedNumpyArray([[1, 3],\n"
                                "                 [6, 8]], [['a', 'b'], None])"))
 
+    a = named_array.NamedNumpyArray([0, 0, 0, 50, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                                    [str(i) for i in range(13)], dtype=np.int32)
+    numpy_repr = np.array_repr(a)
+    if "\n" in numpy_repr:  # ie numpy > 1.14
+      self.assertEqual(repr(a), """
+NamedNumpyArray([ 0,  0,  0, 50,  0,  0,  0,  0,  0,  0,  0,  0,  0],
+                ['0', '1', '2', '3', '4', '...', '8', '9', '10', '11', '12'],
+                dtype=int32)""".strip())  # Keep the middle newlines.
+    else:
+      self.assertEqual(repr(a), (
+          "NamedNumpyArray("
+          "[ 0,  0,  0, 50,  0,  0,  0,  0,  0,  0,  0,  0,  0], "
+          "['0', '1', '2', '3', '4', '...', '8', '9', '10', '11', '12'], "
+          "dtype=int32)"))  # Note the lack of newlines.
+
     a = named_array.NamedNumpyArray([list(range(50))] * 50,
                                     [None, ["a%s" % i for i in range(50)]])
     self.assertIn("49", str(a))
     self.assertIn("49", repr(a))
+    self.assertIn("a4", repr(a))
+    self.assertIn("a49", repr(a))
 
     a = named_array.NamedNumpyArray([list(range(50))] * 50,
                                     [["a%s" % i for i in range(50)], None])
     self.assertIn("49", str(a))
     self.assertIn("49", repr(a))
+    self.assertIn("a4", repr(a))
+    self.assertIn("a49", repr(a))
 
   def test_pickle(self):
     arr = named_array.NamedNumpyArray([1, 3, 6], ["a", "b", "c"])

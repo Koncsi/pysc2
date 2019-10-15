@@ -126,19 +126,30 @@ def agent():
       config_port=FLAGS.config_port,
       race=sc2_env.Race[FLAGS.agent_race],
       step_mul=FLAGS.step_mul,
+      realtime=FLAGS.realtime,
       agent_interface_format=sc2_env.parse_agent_interface_format(
           feature_screen=FLAGS.feature_screen_size,
           feature_minimap=FLAGS.feature_minimap_size,
           rgb_screen=FLAGS.rgb_screen_size,
           rgb_minimap=FLAGS.rgb_minimap_size,
           action_space=FLAGS.action_space,
+          use_unit_counts=True,
+          use_camera_position=True,
+          show_cloaked=True,
+          show_burrowed_shadows=True,
+          show_placeholders=True,
+          send_observation_proto=True,
+          crop_to_playable_area=True,
+          raw_crop_to_playable_area=True,
+          allow_cheating_layers=True,
+          add_cargo_to_units=True,
           use_feature_units=FLAGS.use_feature_units),
       visualize=FLAGS.render) as env:
     agents = [agent_cls()]
     logging.info("Connected, starting run_loop.")
     try:
       run_loop.run_loop(agents, env)
-    except lan_sc2_env.RestartException:
+    except lan_sc2_env.RestartError:
       pass
   logging.info("Done.")
 
@@ -225,6 +236,11 @@ def human():
     if FLAGS.render:
       join.options.raw = True
       join.options.score = True
+      join.options.raw_affects_selection = True
+      join.options.raw_crop_to_playable_area = True
+      join.options.show_cloaked = True
+      join.options.show_burrowed_shadows = True
+      join.options.show_placeholders = True
       if FLAGS.feature_screen_size and FLAGS.feature_minimap_size:
         fl = join.options.feature_layer
         fl.width = 24

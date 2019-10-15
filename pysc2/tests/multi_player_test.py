@@ -67,8 +67,8 @@ class TestMultiplayer(utils.TestCase):
       # Save the maps so they can access it.
       map_path = os.path.basename(map_inst.path)
       print_stage("save_map")
-      parallel.run((c.save_map, map_path, map_inst.data(run_config))
-                   for c in controllers)
+      for c in controllers:  # Skip parallel due to a race condition on Windows.
+        c.save_map(map_path, map_inst.data(run_config))
 
       # Create the create request.
       create = sc_pb.RequestCreateGame(
@@ -79,10 +79,9 @@ class TestMultiplayer(utils.TestCase):
       # Create the join request.
       join = sc_pb.RequestJoinGame(race=sc_common.Random, options=interface)
       join.shared_port = 0  # unused
-      join.server_ports.game_port = ports.pop(0)
-      join.server_ports.base_port = ports.pop(0)
-      for _ in range(players - 1):
-        join.client_ports.add(game_port=ports.pop(0), base_port=ports.pop(0))
+      join.server_ports.game_port = ports[0]
+      join.server_ports.base_port = ports[1]
+      join.client_ports.add(game_port=ports[2], base_port=ports[3])
 
       # Play a few short games.
       for _ in range(2):  # 2 episodes

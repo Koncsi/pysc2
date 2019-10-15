@@ -38,7 +38,7 @@ Read the README at https://github.com/deepmind/pysc2 for more information.
 
 setup(
     name='PySC2',
-    version='2.0.2',
+    version='3.0.0',
     description='Starcraft II environment and library for training agents.',
     long_description=description,
     author='DeepMind',
@@ -58,6 +58,7 @@ setup(
     ],
     install_requires=[
         'absl-py>=0.1.0',
+        'deepdiff',
         'enum34',
         'future',
         'futures; python_version == "2.7"',
@@ -68,7 +69,8 @@ setup(
         'protobuf>=2.6',
         'pygame',
         'requests',
-        's2clientprotocol>=4.6.0.67926.0',
+        's2clientprotocol>=4.10.1.75800.0',
+        's2protocol',
         'six',
         'sk-video',
         'websocket-client',
@@ -91,6 +93,9 @@ setup(
         'Operating System :: MacOS :: MacOS X',
         'Programming Language :: Python :: 2.7',
         'Programming Language :: Python :: 3.4',
+        'Programming Language :: Python :: 3.5',
+        'Programming Language :: Python :: 3.6',
+        'Programming Language :: Python :: 3.7',
         'Topic :: Scientific/Engineering :: Artificial Intelligence',
     ],
 )

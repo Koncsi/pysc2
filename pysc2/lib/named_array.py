@@ -117,7 +117,9 @@ class NamedNumpyArray(np.ndarray):
           raise ValueError("Bad names. Must be None, a list of strings, "
                            "a namedtuple, or IntEnum.")
         if obj.shape[i] != len(o):
-          raise ValueError("Names in dimension %s is the wrong length" % i)
+          raise ValueError(
+              "Wrong number of names in dimension %s. Got %s, expected %s." % (
+                  i, len(o), obj.shape[i]))
         index_names.append({n: j for j, n in enumerate(o)})
     if only_none:
       raise ValueError("No names given. Use a normal numpy.ndarray instead.")
@@ -149,6 +151,14 @@ class NamedNumpyArray(np.ndarray):
     indices = self._indices(indices)
     obj = super(NamedNumpyArray, self).__getitem__(indices)
 
+    if (isinstance(indices, np.ndarray) and len(indices.shape) > 1 and
+        indices.dtype == bool):
+      # Is this a multi-dimensional mask, eg: obj[obj == 5] ?
+      # Multi-dimensional masks return a single dimensional array, and it's
+      # unclear what it means for the result to have names, so return a normal
+      # numpy array.
+      return np.array(obj)
+
     if isinstance(obj, np.ndarray):  # If this is a view, index the names too.
       if not isinstance(indices, tuple):
         indices = (indices,)
@@ -156,31 +166,38 @@ class NamedNumpyArray(np.ndarray):
       dim = 0
       for i, index in enumerate(indices):
         if isinstance(index, numbers.Integral):
-          pass  # Drop this dimension's names.
+          dim += 1  # Drop this dimension's names.
         elif index is Ellipsis:
           # Copy all the dimensions' names through.
-          end = len(self.shape) - len(indices) + i
-          for j in range(dim, end + 1):
+          end = len(self.shape) - len(indices) + i + 1
+          for j in range(dim, end):
             new_names.append(self._index_names[j])
           dim = end
+        elif index is np.newaxis:  # Add an unnamed dimension.
+          new_names.append(None)
+          # Don't modify dim, as we're still working on the same one.
         elif (self._index_names[dim] is None or
               (isinstance(index, slice) and index == _NULL_SLICE)):
           # Keep unnamed dimensions or ones where the slice is a no-op.
           new_names.append(self._index_names[dim])
+          dim += 1
         elif isinstance(index, (slice, list, np.ndarray)):
           if isinstance(index, np.ndarray) and len(index.shape) > 1:
             raise TypeError("What does it mean to index into a named array by "
-                            "a multidimensional array?")
+                            "a multidimensional array? %s" % index)
           # Rebuild the index of names for the various forms of slicing.
           names = sorted(self._index_names[dim].items(),
                          key=lambda item: item[1])
           names = np.array(names, dtype=object)  # Support full numpy slicing.
           sliced = names[index]  # Actually slice it.
-          sliced = {n: j for j, (n, _) in enumerate(sliced)}  # Reindex.
-          new_names.append(sliced)
+          indexed = {n: j for j, (n, _) in enumerate(sliced)}  # Reindex.
+          if len(sliced) != len(indexed):
+            # Names aren't unique, so drop the names for this dimension.
+            indexed = None
+          new_names.append(indexed)
+          dim += 1
         else:
           raise TypeError("Unknown index: %s; %s" % (type(index), index))
-        dim += 1
       obj._index_names = new_names + self._index_names[dim:]
       if len(obj._index_names) != len(obj.shape):
         raise IndexError("Names don't match object shape: %s != %s" % (
@@ -212,10 +229,11 @@ class NamedNumpyArray(np.ndarray):
 
     # "NamedNumpyArray([1, 3, 6], dtype=int32)" ->
     # ["NamedNumpyArray", "[1, 3, 6]", ", dtype=int32"]
-    matches = re.findall(r"^(\w+)\(([\d\., \n\[\]]*)(, \w+=.+)?\)$",
+    matches = re.findall(r"^(\w+)\(([\d\., \n\[\]]*)(,\s+\w+=.+)?\)$",
                          np.array_repr(self))[0]
-    return "%s(%s, %s%s)" % (
-        matches[0], matches[1], names, matches[2])
+    space = "\n               " if matches[2] and matches[2][1] == "\n" else ""
+    return "%s(%s,%s %s%s)" % (
+        matches[0], matches[1], space, names, matches[2])
 
   def __reduce__(self):
     # Support pickling: https://stackoverflow.com/a/26599346
@@ -236,10 +254,12 @@ class NamedNumpyArray(np.ndarray):
       for i, index in enumerate(indices):
         if index is Ellipsis:
           out.append(index)
-          dim = len(self.shape) - len(indices) + i
+          dim = len(self.shape) - len(indices) + i + 1
+        elif index is np.newaxis:
+          out.append(None)
         else:
           out.append(self._get_index(dim, index))
-        dim += 1
+          dim += 1
       return tuple(out)
     else:
       return self._get_index(0, indices)

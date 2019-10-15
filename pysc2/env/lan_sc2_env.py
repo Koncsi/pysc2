@@ -35,6 +35,7 @@ import time
 from future.builtins import range  # pylint: disable=redefined-builtin
 from pysc2 import run_configs
 from pysc2.env import sc2_env
+from pysc2.lib import features
 from pysc2.lib import run_parallel
 import whichcraft
 
@@ -70,7 +71,7 @@ def tcp_server(tcp_addr, settings):
   sock.listen(1)
   logging.info("Waiting for connection on %s", tcp_addr)
   conn, addr = sock.accept()
-  logging.info("Accepted connection from %s", Addr(*addr))
+  logging.info("Accepted connection from %s", Addr(*addr[:2]))
 
   # Send map_data independently for py2/3 and json encoding reasons.
   write_tcp(conn, settings["map_data"])
@@ -196,7 +197,7 @@ def forward_ports(remote_host, local_host, local_listen_ports,
                           stdin=subprocess.PIPE, close_fds=(os.name == "posix"))
 
 
-class RestartException(Exception):
+class RestartError(Exception):
   pass
 
 
@@ -288,21 +289,23 @@ class LanSC2Env(sc2_env.SC2Env):
 
     self._score_index = -1  # Win/loss only.
     self._score_multiplier = 1
-    self._episode_length = 0  # No limit.
+    self._episode_length = sc2_env.MAX_STEP_COUNT
     self._ensure_available_actions = False
     self._discount_zero_after_timeout = False
-
-    self._run_config = run_configs.get()
     self._parallel = run_parallel.RunParallel()  # Needed for multiplayer.
+    self._game_info = None
+    self._action_delay_fns = [None]
 
     interface = self._get_interface(
         agent_interface_format=agent_interface_format, require_raw=visualize)
 
-    self._launch_remote(host, config_port, race, name, interface)
+    self._launch_remote(host, config_port, race, name, interface,
+                        agent_interface_format)
 
-    self._finalize([agent_interface_format], [interface], visualize)
+    self._finalize(visualize)
 
-  def _launch_remote(self, host, config_port, race, name, interface):
+  def _launch_remote(self, host, config_port, race, name, interface,
+                     agent_interface_format):
     """Make sure this stays synced with bin/play_vs_agent.py."""
     self._tcp_conn, settings = tcp_client(Addr(host, config_port))
 
@@ -325,9 +328,10 @@ class LanSC2Env(sc2_env.SC2Env):
         settings["ports"]["client"]["base"],
     ]
 
+    self._run_config = run_configs.get(version=settings["game_version"])
     self._sc2_procs = [self._run_config.start(
-        extra_ports=extra_ports, host=host, version=settings["game_version"],
-        window_loc=(700, 50), want_rgb=interface.HasField("render"))]
+        extra_ports=extra_ports, host=host, window_loc=(700, 50),
+        want_rgb=interface.HasField("render"))]
     self._controllers = [p.controller for p in self._sc2_procs]
 
     # Create the join request.
@@ -343,10 +347,15 @@ class LanSC2Env(sc2_env.SC2Env):
     self._controllers[0].save_map(settings["map_path"], settings["map_data"])
     self._controllers[0].join_game(join)
 
+    self._game_info = [self._controllers[0].game_info()]
+    self._features = [features.features_from_game_info(
+        game_info=self._game_info[0],
+        agent_interface_format=agent_interface_format)]
+
   def _restart(self):
     # Can't restart since it's not clear how you'd coordinate that with the
     # other players.
-    raise RestartException("Can't restart")
+    raise RestartError("Can't restart")
 
   def close(self):
     if hasattr(self, "_tcp_conn") and self._tcp_conn:
@@ -355,4 +364,5 @@ class LanSC2Env(sc2_env.SC2Env):
     if hasattr(self, "_udp_sock") and self._udp_sock:
       self._udp_sock.close()
       self._udp_sock = None
+    self._run_config = None
     super(LanSC2Env, self).close()
